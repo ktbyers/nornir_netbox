@@ -8,6 +8,8 @@ from typing import Optional
 from typing import Union
 from typing import Type
 from pathlib import Path
+import aiohttp
+import aiofiles
 
 from nornir.core.inventory import ConnectionOptions
 from nornir.core.inventory import Defaults
@@ -24,6 +26,25 @@ import ruamel.yaml
 
 logger = logging.getLogger(__name__)
 
+async def async_yml_load(fname: str) -> Any:
+    yml = ruamel.yaml.YAML(typ="safe")
+    async with aiofiles.open(fname) as f:
+        data = await f.read()
+        data_struct = yml.load(data)
+        return data_struct
+
+async def async_file_wrapper(file_path: Path, ignore_file_permission_errors: bool) -> Dict[str, Any]:
+    if file_path.exists():
+        try:
+            data_dict = await async_yml_load(str(file_path))
+            data_dict = data_dict or {}
+            return data_dict
+        except PermissionError:
+            if not self.ignore_file_permission_errors:
+                raise
+            logger.warn(
+                f"Unable to read file {file_path} due to a permission issue"
+            )
 
 def _get_connection_options(data: Dict[str, Any]) -> Dict[str, ConnectionOptions]:
     cp = {}
@@ -286,6 +307,122 @@ class NetBoxInventory2:
                     continue
         return groups
 
+    async def load_async(self) -> Inventory:
+
+        platforms: List[Dict[str, Any]] = []
+
+        if self.use_platform_napalm_driver:
+            platforms = await self._get_resources_async(
+                url=f"{self.nb_url}/api/dcim/platforms/?limit=0", params={}
+            )
+
+        nb_devices: List[Dict[str, Any]] = []
+        nb_devices = await self._get_resources_async(
+            url=f"{self.nb_url}/api/dcim/devices/?limit=0",
+            params=self.filter_parameters,
+        )
+
+        if self.include_vms:
+            nb_devices.extend(
+                await self._get_resources_async(
+                    url=f"{self.nb_url}/api/virtualization/virtual-machines/?limit=0",
+                    params=self.filter_parameters,
+                )
+            )
+
+        hosts = Hosts()
+        groups = Groups()
+        defaults = Defaults()
+        defaults_dict: Dict[str, Any] = {}
+        groups_dict: Dict[str, Any] = {}
+
+        default_dict = await async_file_wrapper(file_path=self.defaults_file, ignore_file_permission_errors=self.ignore_file_permission_errors)
+        if self.defaults_file.exists():
+            try:
+                defaults_dict = await async_yml_load(str(self.defaults_file))
+                defaults_dict = defaults_dict or {}
+            except PermissionError:
+                if not self.ignore_file_permission_errors:
+                    raise
+                logger.warn(
+                    f"Unable to read defaults file {self.defaults_file} due to a permission issue"
+                )
+
+        defaults = _get_defaults(defaults_dict)
+
+        if self.group_file.exists():
+            try:
+                with self.group_file.open("r") as f:
+                    groups_dict = yml.load(f) or {}
+
+            except PermissionError:
+                if not self.ignore_file_permission_errors:
+                    raise
+
+                logger.warn(
+                    f"Unable to read group file {self.group_file} due to a permission issue"
+                )
+
+        for n, g in groups_dict.items():
+            groups[n] = _get_inventory_element(Group, g, n, defaults)
+
+        for g in groups.values():
+            g.groups = ParentGroups([groups[g] for g in g.groups])
+
+        for device in nb_devices:
+            serialized_device: Dict[Any, Any] = {}
+            serialized_device["data"] = device
+
+            if self.flatten_custom_fields:
+                for cf, value in device["custom_fields"].items():
+                    serialized_device["data"][cf] = value
+                serialized_device["data"].pop("custom_fields")
+
+            hostname = None
+            if device.get("primary_ip"):
+                hostname = device.get("primary_ip", {}).get("address", "").split("/")[0]
+            else:
+                if device.get("name") is not None:
+                    hostname = device["name"]
+            serialized_device["hostname"] = hostname
+
+            if isinstance(device["platform"], dict) and self.use_platform_slug:
+                platform = device["platform"].get("slug")
+            elif (
+                isinstance(device["platform"], dict) and self.use_platform_napalm_driver
+            ):
+                platform = [
+                    platform
+                    for platform in platforms
+                    if device["platform"]["slug"] == platform["slug"]
+                ][0]["napalm_driver"]
+            elif isinstance(device["platform"], dict):
+                platform = device["platform"].get("name")
+            else:
+                platform = device["platform"]
+
+            serialized_device["platform"] = platform
+
+            name = serialized_device["data"].get("name") or str(
+                serialized_device["data"].get("id")
+            )
+
+            hosts[name] = _get_inventory_element(
+                Host, serialized_device, name, defaults
+            )
+
+            groups_extracted = self._extract_device_groups(device)
+
+            for group in groups_extracted:
+                if group not in groups.keys():
+                    groups[group] = _get_inventory_element(Group, {}, group, defaults)
+
+            hosts[name].groups = ParentGroups([groups[g] for g in groups_extracted])
+
+        return Inventory(hosts=hosts, groups=groups, defaults=defaults)
+
+
+
     def load(self) -> Inventory:
         yml = ruamel.yaml.YAML(typ="safe")
 
@@ -401,6 +538,20 @@ class NetBoxInventory2:
             hosts[name].groups = ParentGroups([groups[g] for g in groups_extracted])
 
         return Inventory(hosts=hosts, groups=groups, defaults=defaults)
+
+    async def _get_resources_async(self, url: str, params: Dict[str, Any]]) -> List[Dict[str, Any]]:
+        resources: List[Dict[str, Any]] = []
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as r:
+                while True:
+                    if not r.status_code == 200:
+                        raise ValueError(
+                            f"Failed to get data from NetBox instance {self.nb_url}"
+                        )
+                    resp = await r.json()
+                    resources.extend(resp.get("results"))
+                    url = resp.get("next")
+        return resources
 
     def _get_resources(self, url: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
 
