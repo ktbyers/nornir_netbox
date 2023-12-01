@@ -26,6 +26,7 @@ import ruamel.yaml
 
 logger = logging.getLogger(__name__)
 
+
 async def async_yml_load(fname: str) -> Any:
     yml = ruamel.yaml.YAML(typ="safe")
     async with aiofiles.open(fname) as f:
@@ -33,18 +34,20 @@ async def async_yml_load(fname: str) -> Any:
         data_struct = yml.load(data)
         return data_struct
 
-async def async_file_wrapper(file_path: Path, ignore_file_permission_errors: bool) -> Dict[str, Any]:
+
+async def async_file_wrapper(
+    file_path: Path, ignore_file_permission_errors: bool
+) -> Dict[str, Any]:
     if file_path.exists():
         try:
             data_dict = await async_yml_load(str(file_path))
             data_dict = data_dict or {}
             return data_dict
         except PermissionError:
-            if not self.ignore_file_permission_errors:
+            if not ignore_file_permission_errors:
                 raise
-            logger.warn(
-                f"Unable to read file {file_path} due to a permission issue"
-            )
+            logger.warn(f"Unable to read file {file_path} due to a permission issue")
+
 
 def _get_connection_options(data: Dict[str, Any]) -> Dict[str, ConnectionOptions]:
     cp = {}
@@ -130,7 +133,6 @@ class NBInventory:
         self.session.verify = ssl_verify
 
     def load(self) -> Inventory:
-
         url = f"{self.base_url}/api/dcim/devices/?limit=0"
 
         nb_devices: List[Dict[str, Any]] = []
@@ -153,7 +155,6 @@ class NBInventory:
         defaults = Defaults()
 
         for device in nb_devices:
-
             serialized_device: Dict[Any, Any] = {}
             serialized_device["data"] = {}
             serialized_device["data"]["serial"] = device.get("serial")
@@ -308,7 +309,6 @@ class NetBoxInventory2:
         return groups
 
     async def load_async(self) -> Inventory:
-
         platforms: List[Dict[str, Any]] = []
 
         if self.use_platform_napalm_driver:
@@ -336,10 +336,16 @@ class NetBoxInventory2:
         defaults_dict: Dict[str, Any] = {}
         groups_dict: Dict[str, Any] = {}
 
-        default_dict = await async_file_wrapper(file_path=self.defaults_file, ignore_file_permission_errors=self.ignore_file_permission_errors)
+        defaults_dict = await async_file_wrapper(
+            file_path=self.defaults_file,
+            ignore_file_permission_errors=self.ignore_file_permission_errors,
+        )
         defaults = _get_defaults(defaults_dict)
 
-        groups_dict = await async_file_wrapper(file_path=self.groups_file, ignore_file_permission_errors=self.ignore_file_permission_errors)
+        groups_dict = await async_file_wrapper(
+            file_path=self.groups_file,
+            ignore_file_permission_errors=self.ignore_file_permission_errors,
+        )
         for n, g in groups_dict.items():
             groups[n] = _get_inventory_element(Group, g, n, defaults)
         for g in groups.values():
@@ -396,8 +402,6 @@ class NetBoxInventory2:
             hosts[name].groups = ParentGroups([groups[g] for g in groups_extracted])
 
         return Inventory(hosts=hosts, groups=groups, defaults=defaults)
-
-
 
     def load(self) -> Inventory:
         yml = ruamel.yaml.YAML(typ="safe")
@@ -515,7 +519,9 @@ class NetBoxInventory2:
 
         return Inventory(hosts=hosts, groups=groups, defaults=defaults)
 
-    async def _get_resources_async(self, url: str, params: Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _get_resources_async(
+        self, url: str, params: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         resources: List[Dict[str, Any]] = []
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as r:
@@ -530,7 +536,6 @@ class NetBoxInventory2:
         return resources
 
     def _get_resources(self, url: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-
         resources: List[Dict[str, Any]] = []
 
         while url:
