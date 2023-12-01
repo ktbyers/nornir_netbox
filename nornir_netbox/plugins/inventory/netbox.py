@@ -337,35 +337,11 @@ class NetBoxInventory2:
         groups_dict: Dict[str, Any] = {}
 
         default_dict = await async_file_wrapper(file_path=self.defaults_file, ignore_file_permission_errors=self.ignore_file_permission_errors)
-        if self.defaults_file.exists():
-            try:
-                defaults_dict = await async_yml_load(str(self.defaults_file))
-                defaults_dict = defaults_dict or {}
-            except PermissionError:
-                if not self.ignore_file_permission_errors:
-                    raise
-                logger.warn(
-                    f"Unable to read defaults file {self.defaults_file} due to a permission issue"
-                )
-
         defaults = _get_defaults(defaults_dict)
 
-        if self.group_file.exists():
-            try:
-                with self.group_file.open("r") as f:
-                    groups_dict = yml.load(f) or {}
-
-            except PermissionError:
-                if not self.ignore_file_permission_errors:
-                    raise
-
-                logger.warn(
-                    f"Unable to read group file {self.group_file} due to a permission issue"
-                )
-
+        groups_dict = await async_file_wrapper(file_path=self.groups_file, ignore_file_permission_errors=self.ignore_file_permission_errors)
         for n, g in groups_dict.items():
             groups[n] = _get_inventory_element(Group, g, n, defaults)
-
         for g in groups.values():
             g.groups = ParentGroups([groups[g] for g in g.groups])
 
