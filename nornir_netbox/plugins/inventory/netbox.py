@@ -347,7 +347,7 @@ class NetBoxInventory2:
         defaults = _get_defaults(defaults_dict)
 
         groups_dict = await async_file_wrapper(
-            file_path=self.groups_file,
+            file_path=self.group_file,
             ignore_file_permission_errors=self.ignore_file_permission_errors,
         )
         for n, g in groups_dict.items():
