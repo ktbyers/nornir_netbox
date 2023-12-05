@@ -38,15 +38,16 @@ async def async_yml_load(fname: str) -> Any:
 async def async_file_wrapper(
     file_path: Path, ignore_file_permission_errors: bool
 ) -> Dict[str, Any]:
+    data_dict = {}
     if file_path.exists():
         try:
             data_dict = await async_yml_load(str(file_path))
             data_dict = data_dict or {}
-            return data_dict
         except PermissionError:
             if not ignore_file_permission_errors:
                 raise
             logger.warn(f"Unable to read file {file_path} due to a permission issue")
+    return data_dict
 
 
 def _get_connection_options(data: Dict[str, Any]) -> Dict[str, ConnectionOptions]:
@@ -258,12 +259,11 @@ class NetBoxInventory2:
         **kwargs: Any,
     ) -> None:
         filter_parameters = filter_parameters or {}
-        nb_url = nb_url or os.environ.get("NB_URL", "http://localhost:8080")
-        nb_token = nb_token or os.environ.get(
+        self.nb_url = nb_url or os.environ.get("NB_URL", "http://localhost:8080")
+        self.nb_token = nb_token or os.environ.get(
             "NB_TOKEN", "0123456789abcdef0123456789abcdef01234567"
         )
 
-        self.nb_url = nb_url
         self.flatten_custom_fields = flatten_custom_fields
         self.filter_parameters = filter_parameters
         self.include_vms = include_vms
@@ -271,8 +271,9 @@ class NetBoxInventory2:
         self.use_platform_napalm_driver = use_platform_napalm_driver
 
         self.session = requests.Session()
-        self.session.headers.update({"Authorization": f"Token {nb_token}"})
+        self.session.headers.update({"Authorization": f"Token {self.nb_token}"})
         self.session.verify = ssl_verify
+        self.ssl_verify = ssl_verify
         self.group_file = Path(group_file).expanduser()
         self.defaults_file = Path(defaults_file).expanduser()
         self.ignore_file_permission_errors = ignore_file_permission_errors
@@ -309,6 +310,9 @@ class NetBoxInventory2:
         return groups
 
     async def load_async(self) -> Inventory:
+        import pdbr
+
+        pdbr.set_trace()
         platforms: List[Dict[str, Any]] = []
 
         if self.use_platform_napalm_driver:
@@ -522,11 +526,16 @@ class NetBoxInventory2:
     async def _get_resources_async(
         self, url: str, params: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
+        headers = {"Authorization": f"Token {self.nb_token}"}
+
         resources: List[Dict[str, Any]] = []
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as r:
-                while True:
-                    if not r.status_code == 200:
+        import pdbr
+
+        pdbr.set_trace()
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, params=params, verify_ssl=self.ssl_verify) as r:
+                while url:
+                    if not r.status == 200:
                         raise ValueError(
                             f"Failed to get data from NetBox instance {self.nb_url}"
                         )
